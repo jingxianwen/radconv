@@ -50,7 +50,6 @@ namelist/radiation_nml/ solar_constant, del_sol, &
 contains
 
 subroutine output() 
-  write(12, '(9999(f16.8))') ( flux_rad(n), n=1,NLAYER )
   write(13, '(9999(f16.8))') ( flux_sw(n), n=1,NLAYER )
   write(14, '(9999(f16.8))') ( b(n), n=1,NLAYER )
   write(15, '(9999(f16.8))') ( tdt_rad(n), n=1,NLAYER )
@@ -61,6 +60,7 @@ subroutine output()
   write(20, '(9999(f16.8))') ( down(n), n=1,NLAYER )
   write(21, '(9999(f16.8))') ( net(n), n=1,NLAYER )
   write(22, '(9999(f16.8))') ( solar_down(n), n=1,NLAYER )
+  write(23, '(9999(f16.8))') ( flux_rad(n), n=1,NLAYER )
 end subroutine
 
 ! ==================================================================================

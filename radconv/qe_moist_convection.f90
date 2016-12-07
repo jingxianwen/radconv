@@ -355,6 +355,8 @@ real(8) ::  DTref, T1new, T2new
 real(8) :: dp, lmass, tcon, dpn, kappa2
 real(8) :: lh, lmass1, lmass2
 
+real (8) :: dummy
+
 real(8), allocatable, dimension(:) :: pfulln, kappa1, zf
 real(8), allocatable, dimension(:) :: phalfn, zh
 
@@ -393,7 +395,10 @@ integer :: iter1, k, i, n, j, nc
              call newtSolve_ff(DTref, deltap1, deltap2, &
                       qref(k), qref(k-1), Tref(k), Tref(k-1), &
                       p_full(k), p_full(k-1),T1new, T2new,lmass1,lmass2)
-
+             
+             !call qsat((300d00), 100000d00, dummy)
+             !write(23, '(9999(e16.8))') dummy
+              
              if (lmass1 .lt. 0) then !do shallow convection ??
                     call qsat(T1 ,P1, q1)
                     call qsat(T2 ,P2, q2)

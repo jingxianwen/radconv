@@ -2,7 +2,7 @@
 module radconv_mod
 
   ! Convection and radiation modules
-  use qe_moist_convection_mod, only : moist_convection
+  use qe_moist_convection_mod, only : moist_convection, qsat
   use simple_sat_vapor_pres_mod, only : escomp
   use radiation_mod, only : radiation_init, radiation_down, radiation_up, radiation_end
   use constants_mod, only : cp_air, cp_vapor, grav, stefan, rho0, cp_ocean, rdgas, kappa, hlv, rvgas
@@ -16,18 +16,18 @@ module radconv_mod
   real(8) :: GRIDPOWER = 1.                               ! Pressure grid spacing exponent
   integer :: NLAYER = 100                                 ! Number of layers
   integer :: NITER = 1000                                 ! Number of iterations
-  integer :: NOUT = 22                                    ! Total number of output files
   real(8) :: delta_t = 1                                  ! Time step (seconds)
   real(8) :: t_init = 280.                                ! Initial temperature (isothermal)
-  real(8) :: t_eps = 0.1                                  ! Temperature perturbation
   real(8) :: q_init = 1.e-1                               ! Initial water mixing ratio (everywhere)
-  real(8) :: q_eps = 0.1                                  ! Mixing ratio perturbation
   real(8) :: ocean_depth = 0.1                            ! Slab ocean depth (m)
   real(8) :: surf_k = 1.                                  ! Newton's law coefficient for surface heating
   logical :: moistconv = .true.                           ! Do moist convection?
   integer :: thin = 1                                     ! Output thinning factor
   integer :: conv_iter = 20                               ! Convective iterations per step
   real(8) :: max_dt = 5.                                  ! Maximum temperature change per step
+  real(8) :: evap_rate = 0.1                              ! Dimensionless surface evaporation rate
+  real(8) :: tropopause = 0.5                             ! Initial guess at tropopause (bar)
+  real(8) :: psurf = 1.                                   ! Initial surface pressure (bar)
   
   ! Convection params
   real(8), allocatable, dimension(:) :: t             ! Temperature profile
@@ -39,14 +39,16 @@ module radconv_mod
   real(8), allocatable, dimension(:) :: p_out
   real(8), allocatable, dimension(:) :: ph_out
   real(8), allocatable, dimension(:) :: q_out
-  real(8), allocatable, dimension(:) :: rain
+  real(8), allocatable, dimension(:) :: rain              ! Rain profile
   real(8) :: convergence                                  ! Convergence metric
-  real(8), allocatable, dimension(:) :: t_prev
+  real(8), allocatable, dimension(:) :: t_prev            ! Previous timestep arrays
   real(8), allocatable, dimension(:) :: q_prev
   real(8), allocatable, dimension(:) :: p_prev
   real(8) :: raining                                      ! Raining?
   real(8) :: Ep                                           ! ?
-  real(8), allocatable, dimension(:) :: t_moistad          
+  real(8), allocatable, dimension(:) :: t_moistad         ! Moist adiabat profile
+  real(8), allocatable, dimension(:) :: qs                ! Saturated mixing ratio          
+  real(8) :: dqdt                                         ! Evaporation rate
   
   ! Radiation params
   real(8) :: net_surf_sw_down
@@ -60,15 +62,17 @@ module radconv_mod
   real(8) :: ps                                            ! Surface pressure
   real(8), allocatable, dimension(:) :: cp                 ! Heat capacity
   
+  ! General stuff
+  integer :: NOUT = 23                                    ! Total number of output files
   integer :: i, j, n
-  logical :: call_output
+  logical :: call_output                                  ! Whether or not to output
   real(8) :: time = 0                                     ! Simulation time (seconds)
-  real(8) :: r
   
   namelist/radconv_nml/ NITER, NLAYER, delta_t, t_init, &
                         q_init, ocean_depth, surf_k, &
-                        t_eps, q_eps, GRIDPOWER, &
-                        moistconv, thin, conv_iter, max_dt
+                        GRIDPOWER, tropopause, &
+                        moistconv, thin, conv_iter, max_dt, &
+                        evap_rate, psurf
                           
   contains
   
@@ -84,6 +88,7 @@ module radconv_mod
     write(9, '(9999(e16.8))') ( t_ad(i), i=1,NLAYER )
     write(10, '(9999(e16.8))') ( ph(i), i=1,NLAYER )
     write(11, '(9999(e16.8))') ( t_moistad(i), i=1,NLAYER )
+    write(12, '(9999(e16.8))') ( qs(i), i=1,NLAYER )
   end subroutine
   
   subroutine output_start()
@@ -99,8 +104,8 @@ module radconv_mod
     open(unit=9, file='output/t_ad.dat', ACTION="write", STATUS="replace")
     open(unit=10, file='output/ph.dat', ACTION="write", STATUS="replace")
     open(unit=11, file='output/t_moistad.dat', ACTION="write", STATUS="replace")
+    open(unit=12, file='output/qsat.dat', ACTION="write", STATUS="replace")
     ! radiation.f90
-    open(unit=12, file='output/flux_rad.dat', ACTION="write", STATUS="replace")  
     open(unit=13, file='output/flux_sw.dat', ACTION="write", STATUS="replace")    
     open(unit=14, file='output/b.dat', ACTION="write", STATUS="replace")    
     open(unit=15, file='output/tdt_rad.dat', ACTION="write", STATUS="replace")       
@@ -111,6 +116,7 @@ module radconv_mod
     open(unit=20, file='output/down.dat', ACTION="write", STATUS="replace") 
     open(unit=21, file='output/net.dat', ACTION="write", STATUS="replace") 
     open(unit=22, file='output/solar_down.dat', ACTION="write", STATUS="replace") 
+    open(unit=23, file='output/flux_rad.dat', ACTION="write", STATUS="replace")
   end subroutine
   
   subroutine output_end()
@@ -142,6 +148,7 @@ module radconv_mod
     allocate (p_prev (NLAYER))
     allocate (q_prev (NLAYER))
     allocate (t_moistad (NLAYER))
+    allocate (qs (NLAYER))
         
     ! Output files
     call output_start()
@@ -155,24 +162,18 @@ module radconv_mod
     end do
     
     ! Set up even temperature and moisture grids
-    t(NLAYER) = t_init
-    q(NLAYER) = q_init  
+    t = t_init
+    do i = 1, NLAYER
+      if (p(i) < tropopause) then
+        q(i) = 0.
+      else
+        q(i) = q_init
+      endif
+    end do
+     
     ts = t(NLAYER)
     ps = p(NLAYER)
     t_ad = t(NLAYER - 1) * (p / p(NLAYER - 1)) ** kappa
-    
-    ! Perturb the initial conditions. With some small probability,
-    ! add a discontinuous jump at a given layer
-    do i=NLAYER-1,1,-1
-      t(i) = t(i + 1)
-      q(i) = q(i + 1)
-      if (rand() .lt. (10. / NLAYER)) then
-        t(i) = t(i) * (1 + t_eps * 2 * (0.5 - rand()))
-      end if
-      if (rand() .lt. (10. / NLAYER)) then
-        q(i) = q(i) * (1 + q_eps * 2 * (0.5 - rand()))
-      end if
-    end do
 
     ! Set up the convergence array
     convergence = 0.
@@ -183,9 +184,13 @@ module radconv_mod
     ! Calculate dry adiabat
     t_ad = t(NLAYER - 1) * (p / p(NLAYER - 1)) ** kappa
 
-    ! Calculate moist adiabat
-    t_moistad = t_ad * ( 1. + HLV * q * (rvgas / rdgas) / (rdgas * t) ) / ( 1 + HLV * HLV * q / (cp_air * rdgas * t * t))
-    t_moistad = t_moistad + (t(NLAYER - 1) - t_moistad(NLAYER - 1))
+    ! Calculate saturation
+    do i=1, NLAYER
+      call qsat(t(i), p(i) * 1.e5, qs(i))
+    end do
+    
+    ! TODO: Calculate moist adiabat
+    t_moistad = 0
     
     ! Log to file
     call output()
@@ -238,15 +243,15 @@ module radconv_mod
       if ((moistconv) .and. (conv_iter .gt. 0)) then
 
         ! Call moist convection module
-        call moist_convection(t(:), q(:), p(:), ph(:), &
+        call moist_convection(t(:), q(:), 1.e5 * p(:), 1.e5 * ph(:), &
                               raining, t_out, q_out, p_out, ph_out, &
                               Ep, rain, conv_iter)
       
         ! Update arrays
         t(:) = t_out
         q(:) = q_out
-        p(:) = p_out
-        ph(:) = ph_out 
+        p(:) = p_out / 1.e5
+        ph(:) = ph_out / 1.e5
 
       else if (conv_iter .gt. 0) then
         
@@ -273,12 +278,17 @@ module radconv_mod
       ! Surface pressure
       ps = p(NLAYER)
       
+      ! Add moisture to atmosphere if necessary
+      call qsat(T(NLAYER), p(NLAYER) * 1.e5, qs(NLAYER))
+      if (q(NLAYER) .lt. qs(NLAYER)) then
+        dqdt = evap_rate * (qs(NLAYER) - q(NLAYER))
+        q(NLAYER) = q(NLAYER) + dqdt * delta_t
+      end if
+      
       ! Calculate convergence
       convergence = sum(((t - t_prev) / t_prev) ** 2) + &
-                    sum(((p - p_prev) / p_prev) ** 2)
-      if (q_init .gt. 0.) then
-        convergence = convergence + sum(((q - q_prev) / q_prev) ** 2)
-      end if
+                    sum(((p - p_prev) / p_prev) ** 2) + &
+                    sum(((q - q_prev) / (q_prev + 1.e-15)) ** 2)
       convergence = log10(convergence)
       
       ! Update time
@@ -290,10 +300,14 @@ module radconv_mod
         ! Calculate dry adiabat
         t_ad = t(NLAYER - 1) * (p / p(NLAYER - 1)) ** kappa
     
-        ! Calculate moist adiabat
-        t_moistad = t_ad * ( 1. + HLV * q * (rvgas / rdgas) / (rdgas * t) ) / ( 1 + HLV * HLV * q / (cp_air * rdgas * t * t))
-        t_moistad = t_moistad + (t(NLAYER - 1) - t_moistad(NLAYER - 1))
+        ! Calculate saturation
+        do i=1, NLAYER
+          call qsat(t(i), p(i) * 1.e5, qs(i))
+        end do
 
+        ! TODO: Calculate moist adiabat
+        t_moistad = 0
+  
         call output()
       end if
       
@@ -316,7 +330,6 @@ end module
 program radconv
 
   use radconv_mod, only : radconveq
-  
   call radconveq()
   
 end program

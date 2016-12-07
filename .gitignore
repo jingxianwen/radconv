@@ -3,3 +3,4 @@ radconv/output/*.dat
 radconv/__pycache__
 radconv/*.out
 radconv/*.nml
+radconv/fort.*

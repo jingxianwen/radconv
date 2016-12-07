@@ -71,8 +71,9 @@ class RadConv(object):
                     'window', 'wv_exponent', 'solar_exponent', 'wv_tau', 
                     'reference_slp', 'p_broad']
     self._rckeys = ['nlayer', 'niter', 'delta_t', 't_init', 'q_init', 'ocean_depth', 
-                    'surf_k', 't_eps', 'q_eps', 'gridpower',
-                    'moistconv', 'thin', 'conv_iter', 'max_dt']
+                    'surf_k', 'gridpower', 'tropopause',
+                    'moistconv', 'thin', 'conv_iter', 'max_dt', 'evap_rate',
+                    'psurf']
 
   def __iter__(self):
     '''
@@ -111,6 +112,7 @@ class RadConv(object):
     self.wv_tau =             1.0
     self.reference_slp =      1.e5
     self.p_broad =            False
+    self.psurf =              1.0
 
     # Radiative/convective parameters
     self.gridpower =          1.
@@ -118,15 +120,15 @@ class RadConv(object):
     self.niter =              10000
     self.delta_t =            1.
     self.t_init =             280.
-    self.t_eps =              0.01
     self.q_init =             0.1
-    self.q_eps =              0.1
     self.ocean_depth =        0.001
     self.surf_k =             1.
     self.moistconv =          True
     self.thin =               10
     self.conv_iter =          20
     self.max_dt =             5.
+    self.evap_rate =          0.1
+    self.tropopause =         0.3
     
     # List of all arrays
     self._arrays = {
@@ -151,7 +153,8 @@ class RadConv(object):
                     'ts':           ('Surface temperature', 'K'),
                     'ps':           ('Surface pressure', 'bar'),
                     'ph':           ('Half Pressure', 'bar'),
-                    't_moistad':    ('Moist adiabat', 'K')
+                    't_moistad':    ('Moist adiabat', 'K'),
+                    'qsat':         ('Saturation mixing ratio', None)
                    }
     
     # Initialize them
@@ -239,14 +242,17 @@ class RadConv(object):
         surft = ax[i].text(self.ts[0], self.ps[0], 'S', ha = 'center', va = 'center', fontsize = 8, color = 'k')
         # Show the adiabat
         adiabat, = ax[i].plot(self.t_ad[0], self.p[0], color = 'r', alpha = 0.25)
-        # Show the moist adiabat
-        moistad, = ax[i].plot(self.t_moistad[0], self.p[0], color = 'g', alpha = 0.25) 
-        label1 = ax[i].text(self.t_ad[0,self.nlayer // 2], self.p[0, self.nlayer // 2], 
+        labelt = ax[i].text(self.t_ad[0,self.nlayer // 3], self.p[0, self.nlayer // 3], 
                             'Dry adiabat', fontsize = 8, color = 'r', ha = 'right', va = 'top',
                             alpha = 0.5, clip_on = True)
-        label2 = ax[i].text(self.t_moistad[0,self.nlayer // 3], self.p[0,self.nlayer // 3], 
-                            'Moist adiabat', fontsize = 8, color = 'g', ha = 'right', va = 'top',
+      # Special case for water
+      elif arr.var == 'q':
+        # Show the saturation curve
+        satur, = ax[i].plot(self.qsat[0], self.p[0], color = 'g', alpha = 0.25) 
+        labelq = ax[i].text(self.qsat[0,self.nlayer // 3], self.p[0, self.nlayer // 3], 
+                            'Saturation', fontsize = 8, color = 'g', ha = 'right', va = 'top',
                             alpha = 0.5, clip_on = True)
+
       ax[i].set_xlabel(arr.label, fontsize = 14)
       ax[i].set_ylabel('Pressure (bar)', fontsize = 14)
 
@@ -264,11 +270,11 @@ class RadConv(object):
           surft.set_position((self.ts[i],self.ps[i]))
           adiabat.set_xdata(self.t_ad[i])
           adiabat.set_ydata(self.p[i])
-          moistad.set_xdata(self.t_moistad[i])
-          moistad.set_ydata(self.p[i])
-          label1.set_position((self.t_ad[i,self.nlayer // 2], self.p[i,self.nlayer // 2]))
-          label2.set_position((self.t_moistad[i,self.nlayer // 3], self.p[i,self.nlayer // 3]))
-      
+          labelt.set_position((self.t_ad[i,self.nlayer // 3], self.p[i,self.nlayer // 3]))
+        elif arr.var == 'q':
+          satur.set_xdata(self.qsat[i])
+          satur.set_ydata(self.p[i])
+          labelq.set_position((self.qsat[i,self.nlayer // 3], self.p[i,self.nlayer // 3]))
       return curve
       
     anim = animation.FuncAnimation(fig, updatefig, frames = len(self.p), interval=50, repeat = True)
