@@ -16,7 +16,7 @@ module radconv_mod
   real(8) :: GRIDPOWER = 1.                               ! Pressure grid spacing exponent
   integer :: NLAYER = 100                                 ! Number of layers
   integer :: NITER = 1000                                 ! Number of iterations
-  real(8) :: delta_t = 1                                  ! Time step (seconds)
+  real(8) :: delta_t = 1000.                              ! Time step (seconds)
   real(8) :: t_init = 280.                                ! Initial temperature (isothermal)
   real(8) :: q_init = 1.e-1                               ! Initial water mixing ratio (everywhere)
   real(8) :: ocean_depth = 0.1                            ! Slab ocean depth (m)
@@ -155,7 +155,7 @@ module radconv_mod
   
     ! Set up the pressure grids
     do i=1,NLAYER+1
-      ph(i) = 1 - ((NLAYER + 1 - i) / real(NLAYER + 1)) ** GRIDPOWER
+      ph(i) = (1 - ((NLAYER + 1 - i) / real(NLAYER + 1)) ** GRIDPOWER) * psurf
     end do
     do i=1,NLAYER
       p(i) = (ph(i + 1) - ph(i)) / log(ph(i + 1) / ph(i))
@@ -209,9 +209,9 @@ module radconv_mod
         
       ! Downward/upward radiation --> temperature change
       delta_f = 0.
-      call radiation_down (ph, q, t, net_surf_sw_down, surf_lw_down)
-      call radiation_up (ph, ts, t, delta_f, call_output)
-      dt = delta_f * grav / cp(:) / (ph(2:NLAYER+1) - ph(1:NLAYER)) * delta_t
+      call radiation_down (1.e5 * ph, q, t, net_surf_sw_down, surf_lw_down)
+      call radiation_up (1.e5 * ph, ts, t, delta_f, call_output)
+      dt = delta_f * grav / cp(:) / (1.e5 * ph(2:NLAYER+1) - 1.e5 * ph(1:NLAYER)) * delta_t
       
       ! Limit the temperature change per step
       do i = 1, nlayer
@@ -224,9 +224,9 @@ module radconv_mod
       
       ! Re-compute at midpoint (as in Ray's Python module)
       delta_f = 0.
-      call radiation_down (ph, q, t + 0.5 * dt, net_surf_sw_down, surf_lw_down)
-      call radiation_up (ph, ts, t + 0.5 * dt, delta_f, call_output)
-      dt = delta_f * grav / cp(:) / (ph(2:NLAYER+1) - ph(1:NLAYER)) * delta_t
+      call radiation_down (1.e5 * ph, q, t + 0.5 * dt, net_surf_sw_down, surf_lw_down)
+      call radiation_up (1.e5 * ph, ts, t + 0.5 * dt, delta_f, call_output)
+      dt = delta_f * grav / cp(:) / (1.e5 * ph(2:NLAYER+1) - 1.e5 * ph(1:NLAYER)) * delta_t
       
       ! Limit the temperature change per step
       do i = 1, nlayer
@@ -257,7 +257,7 @@ module radconv_mod
         
         do i = 1, conv_iter
           ! Call dry convection module
-          call dry_convection(t, p, ph, t_out)
+          call dry_convection(t, 1.e5 * p, 1.e5 * ph, t_out)
           t(:) = t_out
         end do
   
@@ -273,7 +273,7 @@ module radconv_mod
       ! Update the surface temperature
       ts = ts + tsdt * delta_t
       ! Adjust bottom layer of atmosphere to conserve energy
-      t(NLAYER) = t(NLAYER) - sens_heat * delta_t * grav / (ph(NLAYER + 1) - ph(NLAYER)) / cp(NLAYER)
+      t(NLAYER) = t(NLAYER) - sens_heat * delta_t * grav / (1.e5 * ph(NLAYER + 1) - 1.e5 * ph(NLAYER)) / cp(NLAYER)
       
       ! Surface pressure
       ps = p(NLAYER)

@@ -143,7 +143,7 @@ subroutine radiation_down (p_half, q, t, net_surf_sw_down, surf_lw_down)
   do k = 1, n
      if (p_broad) then
         ! Air broadening, reference pressure = 1 bar
-        lw_tau(k+1) = lw_tau(k) + q(k) * dp_half(k) * (p_half(k) / 1.)
+        lw_tau(k+1) = lw_tau(k) + q(k) * dp_half(k) * (p_half(k) / 1.e5)
      else
         lw_tau(k+1) = lw_tau(k) + q(k) * dp_half(k)
      end if
